@@ -15,5 +15,13 @@ services:
     ports:
       - "6379:6379"
 
+  # 文档解析独立服务（CPU）；应用通过 DOCLING_SERVE_URL 调用，不装 Python docling 包
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu
+    ports:
+      - "5001:5001"
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "1"
+
 volumes:
   gridmind_pg:

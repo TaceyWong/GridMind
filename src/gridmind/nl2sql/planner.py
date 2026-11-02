@@ -13,7 +13,11 @@ def plan_from_question(question: str) -> QueryIR:
         ir.metric = "alarm_count"
         ir.dimensions = ["month"]
         ir.time_range = "this_month_vs_last_month"
-    elif any(k in question for k in ("排名", "最多", "top", "前")):
+    elif any(k in question for k in ("在线", "在线设备")):
+        # 放在「前N」判断之前，避免「当前」误匹配「前」
+        ir.intent = "status"
+        ir.metric = "online_device_count"
+    elif any(k in question for k in ("排名", "最多", "top", "前10", "前五", "前5", "前三")):
         ir.intent = "rank"
         ir.metric = "alarm_count"
         ir.dimensions = ["device_id"]
@@ -25,9 +29,6 @@ def plan_from_question(question: str) -> QueryIR:
         ir.metric = "max_temperature"
         ir.dimensions = ["station_id"]
         ir.time_range = "yesterday" if "昨天" in question else "recent"
-    elif any(k in question for k in ("在线", "在线设备")):
-        ir.intent = "status"
-        ir.metric = "online_device_count"
     elif "告警" in question:
         ir.intent = "metric"
         ir.metric = "alarm_count"

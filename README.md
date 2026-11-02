@@ -98,7 +98,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat -H "Content-Type: application/jso
 | `LLM_API_KEY` | MockProvider + 规则路由 / 模板回答 |
 | PostgreSQL | SQLite 样例库 `src/gridmind/data/gridmind.db` |
 | TDengine | 内存遥测序列 |
-| Redis / pgvector | 进程内状态与内存向量+BM25 |
+| Redis | 进程内状态 |
+| 无 `DATABASE_URL` | RAG 走内存向量 + BM25 |
+| 有 `DATABASE_URL`（pgvector） | RAG 持久化到 Postgres，`<=>` 余弦检索 + BM25 hybrid |
 
 ## 可选依赖
 
@@ -106,7 +108,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat -H "Content-Type: application/jso
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-默认代码路径不强制连接 Compose 服务；后续可把 `DATABASE_URL` / `REDIS_URL` 接到真实实现。
+在 `.env` 配置后，RAG 知识库自动切到 pgvector：
+
+```env
+DATABASE_URL=postgresql://postgres:PASSWORD@127.0.0.1:5432/gridmind
+EMBEDDING_DIM=64
+```
+
+首次连接会执行 `CREATE EXTENSION vector`、建表，并把 `data/knowledge/` 种子写入库。
 
 ## 学习示例（demo）
 
@@ -117,13 +126,29 @@ uv run python -m gridmind.demo                  # 列表
 uv run python -m gridmind.demo pydantic_settings
 uv run python -m gridmind.demo pydantic          # Pydantic v2 完整功能
 uv run python -m gridmind.demo ruff              # Lint + Format
+uv run python -m gridmind.demo mcp               # 官方 MCP SDK（内存 Server）
 uv run python -m gridmind.demo openai_sdk
 uv run python -m gridmind.demo litellm
 uv run python -m gridmind.demo langchain
 uv run python -m gridmind.demo langgraph
 uv run python -m gridmind.demo llamaindex
+uv run python -m gridmind.demo rag              # 完整 RAG：切分/向量/BM25/重排/引用
+uv run python -m gridmind.demo docling_rag      # Docling Server + BGE + LlamaIndex + LLM
+uv run python -m gridmind.demo nl2sql           # 语义层→IR→SQL→Guard→执行
 uv run python -m gridmind.demo integrated       # 综合
 ```
+
+Docling **不装进 Python 依赖**，单独 Docker：
+
+```powershell
+docker compose -f docker/docker-compose.yml up -d docling
+# 或: docker run -p 5001:5001 -e DOCLING_SERVE_ENABLE_UI=1 quay.io/docling-project/docling-serve-cpu
+```
+
+`.env` 里 `DOCLING_SERVE_URL=http://127.0.0.1:5001`。
+
+
+
 
 无 `LLM_API_KEY` 时走 Mock/本地检索；有 Key 时 openai/litellm/langchain 会真实调用。
 

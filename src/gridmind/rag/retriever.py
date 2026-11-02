@@ -61,7 +61,7 @@ class KnowledgeStore:
                     chunk_id=str(uuid4()),
                     doc_id=doc_id,
                     text=piece,
-                    embedding=hash_embed(piece),
+                    embedding=hash_embed(piece, dim=settings.embedding_dim),
                     meta={"source": name, **(meta or {})},
                 )
             )
@@ -87,7 +87,7 @@ class KnowledgeStore:
     def hybrid_search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         if not self.chunks:
             return []
-        q_emb = hash_embed(query)
+        q_emb = hash_embed(query, dim=settings.embedding_dim)
         vector_hits = sorted(
             (
                 {
@@ -152,15 +152,28 @@ class KnowledgeStore:
                 }
                 for h in hits
             ],
+            "backend": "memory",
         }
 
 
-_store: KnowledgeStore | None = None
+_store: KnowledgeStore | Any | None = None
 
 
-def get_knowledge_store() -> KnowledgeStore:
+def get_knowledge_store() -> Any:
+    """Return pgvector store when DATABASE_URL is set, else in-memory store."""
     global _store
     if _store is None:
-        _store = KnowledgeStore()
+        if settings.use_pgvector:
+            from gridmind.rag.pg_store import PgKnowledgeStore
+
+            _store = PgKnowledgeStore()
+        else:
+            _store = KnowledgeStore()
         _store.bootstrap_seed()
     return _store
+
+
+def reset_knowledge_store() -> None:
+    """Test / demo helper to rebuild store after config changes."""
+    global _store
+    _store = None

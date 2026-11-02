@@ -29,10 +29,21 @@ class Settings(BaseSettings):
     llm_timeout: float = Field(default=60.0, alias="LLM_TIMEOUT")
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
 
-    # Optional infra
+    # Optional infra — set DATABASE_URL to enable Postgres + pgvector RAG
     database_url: str = Field(default="", alias="DATABASE_URL")
     redis_url: str = Field(default="", alias="REDIS_URL")
     api_key: str = Field(default="", alias="GRIDMIND_API_KEY")
+    embedding_dim: int = Field(default=64, alias="EMBEDDING_DIM")
+    # Docling 走独立 Docker 服务（本仓库不 pip 安装 docling）
+    docling_serve_url: str = Field(
+        default="http://127.0.0.1:5001",
+        alias="DOCLING_SERVE_URL",
+    )
+    docling_serve_api_key: str = Field(default="", alias="DOCLING_SERVE_API_KEY")
+    bge_model_name: str = Field(
+        default="BAAI/bge-small-zh-v1.5",
+        alias="BGE_MODEL_NAME",
+    )
 
     # Paths
     knowledge_dir: Path = Field(default=DATA_ROOT / "knowledge")
@@ -42,6 +53,10 @@ class Settings(BaseSettings):
     @property
     def has_llm_key(self) -> bool:
         return bool(self.llm_api_key.strip())
+
+    @property
+    def use_pgvector(self) -> bool:
+        return bool(self.database_url.strip())
 
 
 @lru_cache
