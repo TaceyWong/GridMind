@@ -7,9 +7,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from openai import AsyncOpenAI
+import litellm
+
+from gridmind.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Keep LiteLLM quieter in learning demos
+litellm.suppress_debug_info = True
 
 
 @dataclass
@@ -97,23 +102,54 @@ class MockProvider(LLMProvider):
             await asyncio.sleep(0)
 
 
-class OpenAICompatibleProvider(LLMProvider):
-    name = "openai"
+PROVIDER_MODEL_PREFIX: dict[str, str] = {
+    "openai": "openai",
+    "deepseek": "deepseek",
+    "qwen": "openai",  # many Qwen deployments are OpenAI-compatible
+    "local": "openai",
+}
+
+
+def resolve_litellm_model(provider: str | None, model: str | None) -> str:
+    """Map provider/model to a LiteLLM model id.
+
+    Examples:
+      openai + gpt-4o-mini -> openai/gpt-4o-mini
+      deepseek + deepseek-chat -> deepseek/deepseek-chat
+      already-prefixed openai/gpt-4o-mini -> unchanged
+    """
+    raw = (model or settings.llm_model).strip()
+    if "/" in raw:
+        return raw
+    prefix = PROVIDER_MODEL_PREFIX.get((provider or "openai").lower(), "openai")
+    return f"{prefix}/{raw}"
+
+
+class LiteLLMProvider(LLMProvider):
+    """Multi-provider chat via LiteLLM; OpenAI-compatible api_base supported."""
 
     def __init__(
         self,
         *,
         api_key: str,
-        base_url: str,
+        api_base: str,
         default_model: str,
+        provider_name: str = "openai",
         timeout: float = 60.0,
         max_retries: int = 2,
-        provider_name: str = "openai",
     ) -> None:
         self.name = provider_name
+        self.api_key = api_key
+        self.api_base = api_base.rstrip("/")
         self.default_model = default_model
+        self.timeout = timeout
         self.max_retries = max_retries
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+
+    def _model(self, model: str | None) -> str:
+        return resolve_litellm_model(self.name, model or self.default_model)
+
+    def _payload_messages(self, messages: list[ChatMessage]) -> list[dict[str, str]]:
+        return [{"role": m.role, "content": m.content} for m in messages]
 
     async def chat(
         self,
@@ -123,30 +159,35 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.0,
         **kwargs: Any,
     ) -> LLMResult:
-        model_name = model or self.default_model
+        model_name = self._model(model)
         last_err: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = await self.client.chat.completions.create(
+                resp = await litellm.acompletion(
                     model=model_name,
-                    messages=[{"role": m.role, "content": m.content} for m in messages],
+                    messages=self._payload_messages(messages),
                     temperature=temperature,
+                    api_key=self.api_key,
+                    api_base=self.api_base,
+                    timeout=self.timeout,
                     **kwargs,
                 )
-                choice = resp.choices[0].message.content or ""
+                content = resp.choices[0].message.content or ""
                 usage = TokenUsage()
-                if resp.usage:
+                if getattr(resp, "usage", None):
                     usage = TokenUsage(
-                        prompt_tokens=resp.usage.prompt_tokens or 0,
-                        completion_tokens=resp.usage.completion_tokens or 0,
-                        total_tokens=resp.usage.total_tokens or 0,
+                        prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
+                        completion_tokens=int(
+                            getattr(resp.usage, "completion_tokens", 0) or 0
+                        ),
+                        total_tokens=int(getattr(resp.usage, "total_tokens", 0) or 0),
                     )
-                return LLMResult(content=choice, model=model_name, usage=usage, raw=resp)
+                return LLMResult(content=content, model=model_name, usage=usage, raw=resp)
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
-                logger.warning("LLM chat attempt %s failed: %s", attempt + 1, exc)
+                logger.warning("LiteLLM chat attempt %s failed: %s", attempt + 1, exc)
                 await asyncio.sleep(0.5 * (attempt + 1))
-        raise RuntimeError(f"LLM chat failed after retries: {last_err}")
+        raise RuntimeError(f"LiteLLM chat failed after retries: {last_err}")
 
     async def stream(
         self,
@@ -156,17 +197,22 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.0,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        model_name = model or self.default_model
-        stream = await self.client.chat.completions.create(
+        model_name = self._model(model)
+        stream = await litellm.acompletion(
             model=model_name,
-            messages=[{"role": m.role, "content": m.content} for m in messages],
+            messages=self._payload_messages(messages),
             temperature=temperature,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            timeout=self.timeout,
             stream=True,
             **kwargs,
         )
         async for event in stream:
-            if not event.choices:
+            choices = getattr(event, "choices", None) or []
+            if not choices:
                 continue
-            delta = event.choices[0].delta.content
-            if delta:
-                yield delta
+            delta = choices[0].delta
+            text = getattr(delta, "content", None)
+            if text:
+                yield text

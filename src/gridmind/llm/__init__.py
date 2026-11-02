@@ -1,5 +1,5 @@
 from gridmind.llm.gateway import LLMGateway, get_llm_gateway
-from gridmind.llm.providers import ChatMessage, LLMResult, TokenUsage
+from gridmind.llm.providers import ChatMessage, LLMResult, TokenUsage, resolve_litellm_model
 
 __all__ = [
     "ChatMessage",
@@ -7,4 +7,5 @@ __all__ = [
     "LLMResult",
     "TokenUsage",
     "get_llm_gateway",
+    "resolve_litellm_model",
 ]

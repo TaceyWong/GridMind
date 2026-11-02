@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -28,29 +29,49 @@ class ChatService:
         )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
-        """Yield SSE data payloads as the graph progresses (coarse-grained)."""
-        yield _sse("status", {"message": "started"})
+        """Yield SSE events: status → event* → token* → done."""
+        yield _sse("status", {"message": "started", "stage": "routing"})
+        await asyncio.sleep(0)
+
         result = await run_chat(
             request.message,
             session_id=request.session_id,
             provider=request.provider,
             model=request.model,
         )
+
         for event in result.get("events") or []:
             yield _sse("event", event)
+            await asyncio.sleep(0)
+
+        yield _sse(
+            "status",
+            {
+                "message": "generating",
+                "stage": "answer",
+                "route": result.get("route"),
+            },
+        )
+
         answer = result.get("answer") or ""
-        # Stream answer in small chunks for demo UX
-        chunk_size = 24
+        chunk_size = 16
         for i in range(0, len(answer), chunk_size):
             yield _sse("token", {"text": answer[i : i + chunk_size]})
+            await asyncio.sleep(0.02)
+
         yield _sse(
             "done",
             {
                 "message": answer,
                 "route": result.get("route"),
                 "session_id": request.session_id,
+                "sources": result.get("sources") or [],
+                "sql": result.get("sql"),
+                "query_summary": result.get("query_summary"),
+                "query_rows": result.get("query_rows") or [],
             },
         )
+
 
     async def chat_tools(self) -> ChatToolsResponse:
         client = McpClient()

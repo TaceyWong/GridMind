@@ -65,3 +65,7 @@ Desktop.ini
 *.sqlite3
 src/gridmind/data/*.db
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+

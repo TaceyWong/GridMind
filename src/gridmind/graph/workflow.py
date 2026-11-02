@@ -23,7 +23,12 @@ def select_route(state: ChatState) -> Literal["rag", "nl2sql", "mcp", "hybrid"]:
     return "rag"
 
 
-def build_chat_graph():
+def build_chat_graph(*, with_memory: bool = True):
+    """Compile the GridMind chat graph.
+
+    FastAPI uses in-process MemorySaver. LangGraph Agent Server / Studio
+    injects its own checkpointer, so pass ``with_memory=False`` there.
+    """
     builder = StateGraph(ChatState)
     builder.add_node("router", route_question)
     builder.add_node("rag", execute_rag)
@@ -49,8 +54,9 @@ def build_chat_graph():
     builder.add_edge("hybrid", "answer")
     builder.add_edge("answer", END)
 
-    memory = MemorySaver()
-    return builder.compile(checkpointer=memory)
+    if with_memory:
+        return builder.compile(checkpointer=MemorySaver())
+    return builder.compile()
 
 
 _chat_graph = None
@@ -59,8 +65,9 @@ _chat_graph = None
 def get_chat_graph():
     global _chat_graph
     if _chat_graph is None:
-        _chat_graph = build_chat_graph()
+        _chat_graph = build_chat_graph(with_memory=True)
     return _chat_graph
+
 
 
 async def run_chat(

@@ -11,7 +11,7 @@ FastAPI  →  LangGraph(router → rag|nl2sql|mcp|hybrid → answer)
                 │
      ┌──────────┼──────────┬──────────┐
      RAG        NL2SQL     MCP Client  LLM Gateway
-  (BM25+向量)  (SQLGlot)   (IoT/BI)   (OpenAI兼容/Mock)
+  (BM25+向量)  (SQLGlot)   (IoT/BI)   (LiteLLM + LangChain-OpenAI / Mock)
 ```
 
 ## 快速开始
@@ -20,12 +20,46 @@ FastAPI  →  LangGraph(router → rag|nl2sql|mcp|hybrid → answer)
 cd D:\pyspace\GridMind
 uv sync --all-groups
 copy .env.example .env   # 可选填写 LLM_API_KEY
+
+# 后端
 uv run fastapi dev
+
+# 前端（另开终端）
+cd frontend
+npm install
+npm run dev
 ```
 
-打开 http://127.0.0.1:8000/docs
+- 前端开发：http://127.0.0.1:5173 （Vite 代理到后端）
+- API 文档：http://127.0.0.1:8000/docs
+
+生产式一体启动：先 `cd frontend && npm run build`，再 `uv run fastapi dev`，访问 http://127.0.0.1:8000/ 即为 ChatBI 界面。
 
 不配 `LLM_API_KEY` 时使用 Mock + 规则路由，问数/RAG/MCP 仍可跑通。
+
+## LangSmith Studio（可视化调试）
+
+Studio 连的是 LangGraph Agent Server（默认 `2024`），不是 FastAPI `8000`。
+
+```powershell
+uv sync --all-groups
+# .env 里可填 LANGSMITH_API_KEY；本地调试可保持 LANGSMITH_TRACING=false
+uv run langgraph dev
+```
+
+启动后：
+
+- Agent Server：http://127.0.0.1:2024
+- Studio 连接对话框填：`http://127.0.0.1:2024`
+- 或直接打开：https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+
+图名称：`gridmind`（见根目录 `langgraph.json`）。输入示例：
+
+```json
+{ "question": "查询昨天各变电站的最高温度" }
+```
+
+Chrome 若连不上：对 smith.langchain.com 允许 Local network access。Safari 建议 `uv run langgraph dev --tunnel`。
 
 ## 主要 API
 
@@ -82,6 +116,7 @@ uv run pytest -q
 
 ## 目录要点
 
+- `frontend/` Vue3 ChatBI 界面（侧栏历史、聊天、口径摘要、结果表、诊断 SQL）
 - `graph/` LangGraph 状态与节点
 - `llm/` 模型网关与 Prompt
 - `rag/` 文档加载、切分、检索、重排
@@ -91,4 +126,4 @@ uv run pytest -q
 
 ## 说明
 
-本期不做前端、真实 OAuth、生产 RBAC、模型微调。RAG 采用 LlamaIndex 风格的学习实现（本地 hash embedding + BM25 + rerank），便于无 GPU / 无云 Key 演示。
+本期不做真实 OAuth、生产 RBAC、模型微调。RAG 采用 LlamaIndex 风格的学习实现（本地 hash embedding + BM25 + rerank），便于无 GPU / 无云 Key 演示。
