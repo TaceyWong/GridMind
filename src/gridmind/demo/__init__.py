@@ -14,6 +14,7 @@
 
 DEMOS = (
     "pydantic_settings",
+    "pydantic",
     "openai_sdk",
     "litellm",
     "langchain",

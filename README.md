@@ -115,6 +115,7 @@ docker compose -f docker/docker-compose.yml up -d
 ```powershell
 uv run python -m gridmind.demo                  # 列表
 uv run python -m gridmind.demo pydantic_settings
+uv run python -m gridmind.demo pydantic          # Pydantic v2 完整功能
 uv run python -m gridmind.demo openai_sdk
 uv run python -m gridmind.demo litellm
 uv run python -m gridmind.demo langchain
