@@ -4,6 +4,8 @@
 
     uv run python -m gridmind.demo                  # 列出全部
     uv run python -m gridmind.demo pydantic_settings
+    uv run python -m gridmind.demo pydantic
+    uv run python -m gridmind.demo ruff
     uv run python -m gridmind.demo openai_sdk
     uv run python -m gridmind.demo litellm
     uv run python -m gridmind.demo langchain
@@ -15,6 +17,7 @@
 DEMOS = (
     "pydantic_settings",
     "pydantic",
+    "ruff",
     "openai_sdk",
     "litellm",
     "langchain",
