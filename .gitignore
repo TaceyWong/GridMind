@@ -59,3 +59,9 @@ Desktop.ini
 # uv / tooling
 .python-version.local
 .uv/
+
+# Local demo databases / caches
+*.db
+*.sqlite3
+src/gridmind/data/*.db
+

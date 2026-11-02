@@ -1,6 +1,9 @@
-class Nl2SqlConverter:
-    """NL2SQL converter stub. Wire real SQL generation later."""
+"""Backward-compatible stub wrapper around Nl2SqlEngine. """
 
+from gridmind.nl2sql.engine import get_nl2sql_engine
+
+
+class Nl2SqlConverter:
     async def convert(self, natural_language: str) -> str:
-        safe = natural_language.replace("'", "''")
-        return f"-- stub NL2SQL\nSELECT '{safe}' AS query_echo;"
+        result = await get_nl2sql_engine().run(natural_language, use_llm=False)
+        return result["sql"]

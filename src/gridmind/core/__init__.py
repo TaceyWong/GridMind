@@ -1,3 +1,3 @@
-from gridmind.core.config import settings
+from gridmind.core.config import get_settings, settings
 
-__all__ = ["settings"]
+__all__ = ["get_settings", "settings"]

@@ -1,3 +1,3 @@
-from gridmind.nl2sql.converter import Nl2SqlConverter
+from gridmind.nl2sql.engine import Nl2SqlEngine, get_nl2sql_engine
 
-__all__ = ["Nl2SqlConverter"]
+__all__ = ["Nl2SqlEngine", "get_nl2sql_engine"]

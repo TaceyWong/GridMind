@@ -1,0 +1,68 @@
+version: 1
+name: gridmind_demo
+description: 电网 IoT / ChatBI 演示语义模型
+
+entities:
+  station:
+    table: stations
+    description: 变电站
+    fields:
+      station_id: 变电站 ID
+      name: 变电站名称
+      region: 区域
+  device:
+    table: devices
+    description: 设备台账
+    fields:
+      device_id: 设备 ID
+      name: 设备名称
+      station_id: 所属变电站
+      region: 区域
+      device_type: 设备类型
+      status: 在线状态 online/offline
+  alarm:
+    table: alarms
+    description: 告警事件
+    fields:
+      alarm_id: 告警 ID
+      device_id: 设备 ID
+      level: 告警等级
+      message: 告警内容
+      status: 处理状态
+      occurred_at: 发生时间
+  telemetry_daily:
+    table: telemetry_daily
+    description: 设备日聚合遥测（温度）
+    fields:
+      device_id: 设备 ID
+      station_id: 变电站 ID
+      day: 日期
+      max_temp_c: 最高温度
+      avg_temp_c: 平均温度
+
+metrics:
+  alarm_count:
+    label: 告警数量
+    definition: 按告警事件 ID 去重统计
+    sql: COUNT(DISTINCT alarm_id)
+  online_device_count:
+    label: 在线设备数
+    definition: status = online 的设备数量
+    sql: COUNT(*) FILTER-like WHERE status = 'online'
+  max_temperature:
+    label: 最高温度
+    definition: 日聚合最高温度
+    sql: MAX(max_temp_c)
+
+dimensions:
+  - region
+  - station_id
+  - device_id
+  - day
+  - level
+
+tables_whitelist:
+  - stations
+  - devices
+  - alarms
+  - telemetry_daily
