@@ -1,5 +1,7 @@
 from fastapi import FastAPI
-from gridmind.router import API_V1_ROUTER
+
+from gridmind.api.router import api_v1_router
+from gridmind.schemas.common import HealthResponse, MessageResponse
 
 app = FastAPI(
     title="GridMind API",
@@ -9,12 +11,14 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
-app.include_router(API_V1_ROUTER)
+app.include_router(api_v1_router)
 
-@app.get("/",description="Root endpoint.",tags=["System"])
-async def root() -> dict[str, str]:
-    return {"message": "Hello, this is GridMind!"}
 
-@app.get("/health",description="Health check endpoint.",tags=["System"])
-async def health() -> dict[str, str]:
-    return {"message": "OK"}
+@app.get("/", description="Root endpoint.", tags=["System"])
+async def root() -> MessageResponse:
+    return MessageResponse(message="Hello, this is GridMind!")
+
+
+@app.get("/health", description="Health check endpoint.", tags=["System"])
+async def health() -> HealthResponse:
+    return HealthResponse(message="OK")
