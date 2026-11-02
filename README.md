@@ -108,6 +108,23 @@ docker compose -f docker/docker-compose.yml up -d
 
 默认代码路径不强制连接 Compose 服务；后续可把 `DATABASE_URL` / `REDIS_URL` 接到真实实现。
 
+## 学习示例（demo）
+
+独立小例子在 `src/gridmind/demo/`：
+
+```powershell
+uv run python -m gridmind.demo                  # 列表
+uv run python -m gridmind.demo pydantic_settings
+uv run python -m gridmind.demo openai_sdk
+uv run python -m gridmind.demo litellm
+uv run python -m gridmind.demo langchain
+uv run python -m gridmind.demo langgraph
+uv run python -m gridmind.demo llamaindex
+uv run python -m gridmind.demo integrated       # 综合
+```
+
+无 `LLM_API_KEY` 时走 Mock/本地检索；有 Key 时 openai/litellm/langchain 会真实调用。
+
 ## 测试
 
 ```powershell
