@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import MarkdownMessage from "./components/MarkdownMessage.vue";
-import { postQuery, routeLabel, streamChat, type ChatResponse, type QueryResponse } from "./api";
+import {
+  fetchSemanticCatalog,
+  postQuery,
+  routeLabel,
+  streamChat,
+  type ChatResponse,
+  type QueryResponse,
+  type SemanticCatalog,
+  type SemanticMetric,
+} from "./api";
 
 type Role = "user" | "assistant";
 
@@ -25,17 +34,18 @@ type Session = {
 };
 
 const prompts = [
-  "告警等级是如何定义的？",
   "查询昨天各变电站的最高温度",
   "统计各区域告警数量",
-  "查询告警数量排名前5的设备",
+  "各等级告警占比怎么样？",
+  "统计各区域离线设备数",
 ];
 
 /** 走真实 /api/v1/chat/stream，后端 NL2SQL 会在回答里带 gpt-vis */
 const backendChartPrompts = [
   "查询昨天各变电站的最高温度",
   "统计各区域告警数量",
-  "查询告警数量排名前5的设备",
+  "各等级告警占比怎么样？",
+  "统计严重告警按区域分布",
 ];
 
 /** 本地 GPT-Vis 样例：不打后端，直接看 chat 里出图 */
@@ -157,6 +167,15 @@ const busy = ref(false);
 const showDiag = ref(false);
 const error = ref("");
 const feedRef = ref<HTMLElement | null>(null);
+const semantic = ref<SemanticCatalog | null>(null);
+const selectedMetric = ref<string>("");
+const requireMetric = ref(true);
+
+const selectedMetricMeta = computed<SemanticMetric | null>(() => {
+  const key = selectedMetric.value;
+  if (!key || !semantic.value) return null;
+  return semantic.value.metrics.find((m) => m.key === key) || null;
+});
 
 const active = computed(() => sessions.value.find((s) => s.id === activeId.value) || null);
 const hasMessages = computed(() => (active.value?.messages.length || 0) > 0);
@@ -196,6 +215,10 @@ function summarizeTitle(text: string) {
 async function send(text?: string) {
   const content = (text ?? draft.value).trim();
   if (!content || busy.value) return;
+  if (requireMetric.value && !selectedMetric.value) {
+    error.value = "请先选择业务口径（指标）再提问";
+    return;
+  }
 
   const session = ensureSession();
   error.value = "";
@@ -229,6 +252,7 @@ async function send(text?: string) {
     let sources: ChatResponse["sources"];
     let rows: Record<string, unknown>[] | undefined;
     let assembled = "";
+    let streamFailed = false;
 
     const patchAssistant = (patch: Partial<Message>) => {
       const idx = session.messages.findIndex((m) => m.id === thinkingId);
@@ -236,7 +260,27 @@ async function send(text?: string) {
       session.messages[idx] = { ...session.messages[idx], ...patch };
     };
 
-    await streamChat(content, session.id, (event, data) => {
+    const fail = (msg: string, failRoute?: string | null) => {
+      streamFailed = true;
+      error.value = msg;
+      patchAssistant({
+        text: `**出错了**\n\n${msg}`,
+        thinking: false,
+        route: failRoute || route || "nl2sql",
+      });
+    };
+
+    const metric = selectedMetric.value || null;
+    const dimensions = selectedMetricMeta.value?.default_dimensions || null;
+
+    await streamChat(
+      content,
+      session.id,
+      (event, data) => {
+      if (event === "error") {
+        fail(String(data.message || data.detail || "问数失败"), data.route as string | null);
+        return;
+      }
       if (event === "status") {
         const stage = String(data.stage || "");
         if (stage === "routing") {
@@ -267,6 +311,10 @@ async function send(text?: string) {
         sources = (data.sources as ChatResponse["sources"]) || sources;
         const doneRows = data.query_rows as Record<string, unknown>[] | undefined;
         if (doneRows?.length) rows = doneRows;
+        if (summary && typeof summary.error === "string" && summary.error) {
+          fail(String(summary.error), route);
+          return;
+        }
         patchAssistant({
           text: assembled,
           thinking: false,
@@ -277,14 +325,17 @@ async function send(text?: string) {
           rows,
         });
       }
-    });
+      },
+      { metric, dimensions },
+    );
 
     if (
+      !streamFailed &&
       (!rows || rows.length === 0) &&
-      (route === "nl2sql" || /温度|告警|在线|排名|对比/.test(content))
+      (route === "nl2sql" || metric || /温度|告警|在线|排名|对比|离线/.test(content))
     ) {
       try {
-        const q: QueryResponse = await postQuery(content);
+        const q: QueryResponse = await postQuery(content, { metric, dimensions });
         rows = q.rows;
         summary = q.summary;
         sql = q.sql;
@@ -300,13 +351,33 @@ async function send(text?: string) {
           text,
           thinking: false,
         });
-      } catch {
-        // keep streamed payload
+      } catch (qe) {
+        const msg = qe instanceof Error ? qe.message : String(qe);
+        // 流式已有正文时保留，并追加错误；否则整段失败提示
+        if (assembled.trim()) {
+          error.value = msg;
+          patchAssistant({
+            text: `${assembled}\n\n**补充问数失败：** ${msg}`,
+            thinking: false,
+            route: route || "nl2sql",
+          });
+        } else {
+          fail(msg, route || "nl2sql");
+        }
       }
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-    session.messages = session.messages.filter((m) => m.id !== thinkingId);
+    const msg = e instanceof Error ? e.message : String(e);
+    error.value = msg;
+    const idx = session.messages.findIndex((m) => m.id === thinkingId);
+    if (idx >= 0) {
+      session.messages[idx] = {
+        ...session.messages[idx],
+        text: `**出错了**\n\n${msg}`,
+        thinking: false,
+        route: "nl2sql",
+      };
+    }
   } finally {
     busy.value = false;
     session.updatedAt = Date.now();
@@ -372,6 +443,14 @@ async function showChartDemo(demo: (typeof chartDemos)[number]) {
 }
 
 onMounted(async () => {
+  try {
+    semantic.value = await fetchSemanticCatalog();
+    if (!selectedMetric.value && semantic.value.metrics.length) {
+      selectedMetric.value = semantic.value.metrics[0].key;
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "语义目录加载失败";
+  }
   createSession("图表样例");
   await showChartDemo(chartDemos[0]);
 });
@@ -430,13 +509,35 @@ onMounted(async () => {
     </aside>
 
     <main class="stage">
-      <header class="topbar">
-        <div class="topbar-title">{{ active?.title || "新的分析" }}</div>
-        <label class="diag-toggle">
-          <input v-model="showDiag" type="checkbox" />
-          诊断
-        </label>
-      </header>
+      <div class="stage-head">
+        <header class="topbar">
+          <div class="topbar-title">{{ active?.title || "新的分析" }}</div>
+          <div class="topbar-actions">
+            <label class="metric-pick">
+              <span>口径</span>
+              <select v-model="selectedMetric">
+                <option value="">自动识别</option>
+                <option v-for="m in semantic?.metrics || []" :key="m.key" :value="m.key">
+                  {{ m.label }}
+                </option>
+              </select>
+            </label>
+            <label class="diag-toggle">
+              <input v-model="requireMetric" type="checkbox" />
+              强制口径
+            </label>
+            <label class="diag-toggle">
+              <input v-model="showDiag" type="checkbox" />
+              诊断
+            </label>
+          </div>
+        </header>
+
+        <div v-if="selectedMetricMeta" class="metric-banner">
+          <strong>{{ selectedMetricMeta.label }}</strong>
+          <span>{{ selectedMetricMeta.definition }}</span>
+        </div>
+      </div>
 
       <section ref="feedRef" class="feed" aria-live="polite">
         <div class="feed-inner">
@@ -524,7 +625,11 @@ onMounted(async () => {
 
       <footer class="composer">
         <div class="composer-inner">
-          <div v-if="error" class="error">{{ error }}</div>
+          <div v-if="error" class="error" role="alert">
+            <span class="error-label">错误</span>
+            <span class="error-text">{{ error }}</span>
+            <button type="button" class="error-dismiss" @click="error = ''">关闭</button>
+          </div>
           <div class="composer-box">
             <textarea
               v-model="draft"
@@ -665,6 +770,9 @@ onMounted(async () => {
   gap: 2px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+  max-height: 42%;
+  overflow: auto;
+  min-height: 0;
 }
 
 .demo-link {
@@ -690,17 +798,20 @@ onMounted(async () => {
   background: var(--bg);
 }
 
-.topbar {
+.stage-head {
   flex-shrink: 0;
   z-index: 5;
-  height: 52px;
-  padding: 0 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.topbar {
+  min-height: 52px;
+  padding: 10px 28px;
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: center;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
 }
 
 .topbar-title {
@@ -710,6 +821,47 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.metric-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.metric-pick select {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #141414;
+  color: var(--ink-bright);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 140px;
+}
+
+.metric-banner {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 0 28px 10px;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.metric-banner strong {
+  color: var(--ink-bright);
+  font-weight: 650;
 }
 
 .diag-toggle {
@@ -1013,9 +1165,39 @@ textarea::placeholder {
 }
 
 .error {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(196, 91, 91, 0.35);
+  background: rgba(196, 91, 91, 0.1);
+  color: #f0b4b4;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.error-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e88a8a;
+  padding-top: 2px;
+}
+
+.error-text {
+  word-break: break-word;
+}
+
+.error-dismiss {
+  border: 0;
+  background: transparent;
+  color: #e8c0c0;
   font-size: 0.78rem;
-  color: var(--danger);
+  padding: 0 2px;
 }
 
 @media (max-width: 900px) {

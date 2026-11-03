@@ -15,7 +15,7 @@ const segments = computed(() => splitContentSegments(props.content));
   <div class="md-body" :class="{ streaming: streaming }">
     <template v-for="(seg, i) in segments" :key="i">
       <div v-if="seg.kind === 'md'" class="md-chunk" v-html="renderMarkdown(seg.text)" />
-      <GptVisBlock v-else theme="light" :height="280" :syntax="seg.text" />
+      <GptVisBlock v-else theme="dark" :height="280" :syntax="seg.text" />
     </template>
   </div>
 </template>

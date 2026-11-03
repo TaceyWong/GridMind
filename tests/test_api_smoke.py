@@ -20,15 +20,14 @@ def test_chat_degraded():
     assert body["route"] in {"rag", "nl2sql", "mcp", "hybrid"}
 
 
-def test_query_nl2sql():
+def test_query_nl2sql_requires_llm():
     resp = client.post(
         "/api/v1/query",
-        json={"question": "查询当前在线设备数量", "use_llm": False},
+        json={"question": "查询当前在线设备数量"},
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "sql" in body
-    assert isinstance(body["rows"], list)
+    # 无 LLM_API_KEY 时问数必须失败，不再回退模板
+    assert resp.status_code == 503
+    assert "LLM" in resp.json()["detail"]
 
 
 def test_knowledge_documents():

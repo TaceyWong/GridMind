@@ -38,9 +38,13 @@ def rule_route(question: str) -> str:
 
 async def route_question(state: ChatState) -> ChatState:
     question = state["question"]
-    route = rule_route(question)
+    # 用户显式选了语义指标 → 直接走问数
+    if state.get("preferred_metric"):
+        route = "nl2sql"
+    else:
+        route = rule_route(question)
     gateway = get_llm_gateway()
-    if gateway.default_provider != "mock":
+    if gateway.default_provider != "mock" and not state.get("preferred_metric"):
         result = await gateway.chat(
             [
                 ChatMessage(role="system", content=ROUTER_SYSTEM),

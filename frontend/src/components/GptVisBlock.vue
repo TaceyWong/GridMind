@@ -9,7 +9,7 @@ const props = withDefaults(
     height?: number;
   }>(),
   {
-    theme: "light",
+    theme: "dark",
     height: 280,
   },
 );
@@ -88,7 +88,8 @@ onBeforeUnmount(() => {
 .vis-shell {
   margin: 0.85rem 0 1rem;
   border-radius: 14px;
-  background: #f4f4f2;
+  background: #161616;
+  border: 1px solid var(--line);
   overflow: hidden;
 }
 
@@ -103,7 +104,7 @@ onBeforeUnmount(() => {
 
 .vis-fallback {
   padding: 20px 16px;
-  color: #666;
+  color: var(--ink-soft);
   font-size: 0.86rem;
 }
 </style>

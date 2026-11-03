@@ -29,6 +29,7 @@ dependencies = [
     "llama-index-llms-openai>=0.3",
     "llama-index-vector-stores-postgres>=0.5",
     "sqlalchemy>=2.0",
+    "wren-core-py>=0.8.2",
 ]
 
 [project.optional-dependencies]

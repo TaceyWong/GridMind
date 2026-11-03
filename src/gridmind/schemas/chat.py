@@ -8,6 +8,8 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, description="Optional session id.")
     provider: str | None = Field(default=None, description="LLM provider alias.")
     model: str | None = Field(default=None, description="Model name override.")
+    metric: str | None = Field(default=None, description="强制语义指标 key。")
+    dimensions: list[str] | None = Field(default=None, description="强制维度。")
 
 
 class ChatResponse(BaseModel):

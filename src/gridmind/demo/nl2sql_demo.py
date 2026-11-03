@@ -1,12 +1,7 @@
 """学习示例：NL2SQL 原理落地
 
-演示完整链路（学习版，默认可离线）：
-
-1. 语义层（YAML：实体/指标/表白名单）
-2. 意图 → Query IR（结构化中间表示）
-3. IR → SQL（规则编译；有 Key 时可用 LLM 改写）
-4. SQLGlot Guard（只读、白名单、LIMIT）
-5. 执行 → 结果 / 口径摘要
+业务引擎：LLM 逻辑 SQL → Wren 展开 → Guard → 执行（无模板、无回退）。
+本文件 step_by_step 仍用 compiler 做离线示意，便于理解 IR/Guard。
 
 运行::
 
@@ -46,9 +41,9 @@ def step_by_step(question: str) -> None:
     ir = plan_from_question(question)
     print("Query IR:", json.dumps(ir.model_dump(), ensure_ascii=False))
 
-    # 3) 编译 SQL
+    # 3) 离线示意：compiler 模板（业务引擎不走这条）
     sql = compile_sql(ir)
-    print("编译 SQL:\n", sql)
+    print("示意 SQL（非业务路径）:\n", sql)
 
     # 4) Guard
     safe = validate_sql(sql, dialect="sqlite")
@@ -83,10 +78,13 @@ def guard_demos() -> None:
 
 
 async def full_engine_demo() -> None:
-    section("引擎一次跑通（与业务 Nl2SqlEngine 相同）")
+    section("引擎一次跑通（LLM → Wren，无模板回退）")
     if not has_api_key():
         need_key_hint()
-        print("本段 use_llm=False，只走规则编译。\n")
+        print("未配置 LLM_API_KEY：业务引擎会直接报错，跳过本段。\n")
+        return
+
+    from gridmind.nl2sql.engine import Nl2SqlError
 
     engine = get_nl2sql_engine()
     questions = [
@@ -96,20 +94,19 @@ async def full_engine_demo() -> None:
         "对比本月和上月的设备告警数量",
     ]
     for q in questions:
-        result = await engine.run(q, use_llm=False)
+        try:
+            result = await engine.run(q)
+        except Nl2SqlError as exc:
+            print(f"Q: {q}")
+            print(f"  ERROR: {exc}")
+            print()
+            continue
         print(f"Q: {q}")
-        print(f"  metric={result['summary'].get('metric')} dims={result['summary'].get('dimensions')}")
+        print(f"  planner={result['summary'].get('planner')} metric={result['summary'].get('metric')}")
+        print(f"  logical={str(result.get('logical_sql', '')).replace(chr(10), ' ')[:100]}...")
         print(f"  sql={result['sql'].replace(chr(10), ' ')[:100]}...")
         print(f"  rows={result['rows'][:3]}")
         print()
-
-    if has_api_key():
-        print("检测到 API Key：再跑一条 LLM 辅助生成")
-        q = "查询昨天各变电站的最高温度"
-        result = await engine.run(q, use_llm=True)
-        print(f"Q: {q}")
-        print("SQL:", result["sql"])
-        print("rows:", result["rows"][:3])
 
 
 def principle_notes() -> None:
@@ -117,12 +114,10 @@ def principle_notes() -> None:
     print(
         """
 自然语言
-  → 意图 / Schema Linking（planner + 语义层）
-  → Query IR（结构化计划，不是直接 SQL）
-  → SQL Compiler / LLM
-  → SQLGlot Guard（只读、白名单、LIMIT）
-  → Executor（SQLite 演示库；生产换 PG/TDengine）
-  → 口径摘要 + 表格/图表
+  → Query IR（意图/指标约束，可选）
+  → LLM 生成逻辑 SQL（对语义模型；无 LLM 直接报错）
+  → Wren Core 语义展开
+  → SQLGlot Guard → Executor
 """.strip()
     )
     print("\n语义层片段（给 LLM 的 schema 提示）:")

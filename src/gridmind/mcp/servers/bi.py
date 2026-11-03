@@ -7,7 +7,7 @@ from gridmind.nl2sql.engine import get_nl2sql_engine
 
 
 async def nl2sql_query(question: str) -> dict[str, Any]:
-    return await get_nl2sql_engine().run(question, use_llm=False)
+    return await get_nl2sql_engine().run(question)
 
 
 async def alarm_top(limit: int = 5) -> list[dict[str, Any]]:

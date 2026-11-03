@@ -13,6 +13,8 @@ class ChatState(TypedDict, total=False):
     tenant_id: str
     provider: str | None
     model: str | None
+    preferred_metric: str | None
+    preferred_dimensions: list[str]
     route: Route
     messages: list[dict[str, str]]
     rag_context: str

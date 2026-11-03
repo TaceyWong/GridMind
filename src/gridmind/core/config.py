@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     semantic_model_path: Path = Field(default=DATA_ROOT / "semantic" / "grid.yaml")
     sqlite_path: Path = Field(default=DATA_ROOT / "gridmind.db")
 
+    # Wren Core：grid.yaml → MDL → transform_sql（问数必开，失败不回退）
+    wren_core_enabled: bool = Field(default=True, alias="WREN_CORE_ENABLED")
+
     @property
     def has_llm_key(self) -> bool:
         return bool(self.llm_api_key.strip())

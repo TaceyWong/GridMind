@@ -82,7 +82,7 @@ Chrome 若连不上：对 smith.langchain.com 允许 Local network access。Safa
 curl -X POST http://127.0.0.1:8000/api/v1/chat -H "Content-Type: application/json" -d "{\"message\":\"告警等级是如何定义的？\"}"
 
 # NL2SQL
-curl -X POST http://127.0.0.1:8000/api/v1/query -H "Content-Type: application/json" -d "{\"question\":\"查询昨天各变电站的最高温度\",\"use_llm\":false}"
+curl -X POST http://127.0.0.1:8000/api/v1/query -H "Content-Type: application/json" -d "{\"question\":\"查询昨天各变电站的最高温度\"}"
 
 # MCP / IoT
 curl -X POST http://127.0.0.1:8000/api/v1/chat -H "Content-Type: application/json" -d "{\"message\":\"设备 DEV-001 当前状态是什么？\"}"

@@ -1,18 +1,29 @@
+# GridMind 语义手册（单一口径来源）
+# - entities：业务可见对象/字段
+# - metrics：指标定义（label/definition/sql）
+# - dimensions：可切片维度
+# - relationships：标准关联（供 Wren MDL）
+# - tables_whitelist：执行白名单
+
 version: 1
 name: gridmind_demo
 description: 电网 IoT / ChatBI 演示语义模型
+handbook: |
+  1. 先改本文件定义口径，再改 planner/compiler。
+  2. definition 给人看；sql 给编译/Wren 看。
+  3. 未在 entities.fields 暴露的字段，默认不当作可问字段。
 
 entities:
   station:
     table: stations
-    description: 变电站
+    description: 变电站主数据
     fields:
       station_id: 变电站 ID
       name: 变电站名称
-      region: 区域
+      region: 区域（华东/华北/华南/西南）
   device:
     table: devices
-    description: 设备台账
+    description: 一次/二次设备台账
     fields:
       device_id: 设备 ID
       name: 设备名称
@@ -22,44 +33,99 @@ entities:
       status: 在线状态 online/offline
   alarm:
     table: alarms
-    description: 告警事件
+    description: 告警事件流水
     fields:
-      alarm_id: 告警 ID
+      alarm_id: 告警事件 ID（去重主键）
       device_id: 设备 ID
-      level: 告警等级
+      level: 告警等级（严重/重要/一般/提示）
       message: 告警内容
       status: 处理状态
-      occurred_at: 发生时间
+      occurred_at: 发生时间（ISO 文本）
   telemetry_daily:
     table: telemetry_daily
     description: 设备日聚合遥测（温度）
     fields:
       device_id: 设备 ID
       station_id: 变电站 ID
-      day: 日期
-      max_temp_c: 最高温度
-      avg_temp_c: 平均温度
+      day: 统计日 YYYY-MM-DD
+      max_temp_c: 当日最高温度 ℃
+      avg_temp_c: 当日平均温度 ℃
 
 metrics:
   alarm_count:
     label: 告警数量
-    definition: 按告警事件 ID 去重统计
+    definition: 按告警事件 ID 去重统计（COUNT DISTINCT alarm_id）
     sql: COUNT(DISTINCT alarm_id)
+    default_dimensions: [region]
+    synonyms: [告警数, 告警次数, 告警总量]
   online_device_count:
     label: 在线设备数
-    definition: status = online 的设备数量
-    sql: COUNT(*) FILTER-like WHERE status = 'online'
+    definition: devices.status = 'online' 的设备台数
+    sql: COUNT(*) WHERE status = 'online'
+    default_dimensions: []
+    synonyms: [在线数, 在运设备]
+  offline_device_count:
+    label: 离线设备数
+    definition: devices.status = 'offline' 的设备台数
+    sql: COUNT(*) WHERE status = 'offline'
+    default_dimensions: [region]
+    synonyms: [离线数, 掉线设备]
   max_temperature:
     label: 最高温度
-    definition: 日聚合最高温度
+    definition: 遥测日表 max_temp_c 的最大值（℃）
     sql: MAX(max_temp_c)
+    default_dimensions: [station_id]
+    synonyms: [峰值温度, 最高温]
+  avg_temperature:
+    label: 平均温度
+    definition: 遥测日表 avg_temp_c 的平均值（℃）
+    sql: AVG(avg_temp_c)
+    default_dimensions: [station_id]
+    synonyms: [均温, 平均温]
+  critical_alarm_count:
+    label: 严重告警数
+    definition: level = '严重' 的告警事件去重计数
+    sql: COUNT(DISTINCT alarm_id) WHERE level = '严重'
+    default_dimensions: [region]
+    synonyms: [严重告警, 危急告警]
 
 dimensions:
-  - region
-  - station_id
-  - device_id
-  - day
-  - level
+  region:
+    label: 区域
+    definition: 电网区域划分，来自 stations/devices.region
+  station_id:
+    label: 变电站
+    definition: 变电站主键；展示时常关联 stations.name
+  device_id:
+    label: 设备
+    definition: 设备主键；排名场景常用
+  day:
+    label: 日期
+    definition: 日聚合统计日
+  level:
+    label: 告警等级
+    definition: 严重 / 重要 / 一般 / 提示
+  month:
+    label: 月份对比
+    definition: 本月 vs 上月（对比意图专用）
+
+relationships:
+  - name: devices_station
+    models: [devices, stations]
+    joinType: MANY_TO_ONE
+    condition: devices.station_id = stations.station_id
+  - name: alarms_device
+    models: [alarms, devices]
+    joinType: MANY_TO_ONE
+    condition: alarms.device_id = devices.device_id
+  - name: telemetry_station
+    models: [telemetry_daily, stations]
+    joinType: MANY_TO_ONE
+    condition: telemetry_daily.station_id = stations.station_id
+  - name: telemetry_device
+    models: [telemetry_daily, devices]
+    joinType: MANY_TO_ONE
+    condition: telemetry_daily.device_id = devices.device_id
 
 tables_whitelist:
   - stations

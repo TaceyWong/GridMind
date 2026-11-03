@@ -5,5 +5,5 @@ from gridmind.nl2sql.engine import get_nl2sql_engine
 
 class Nl2SqlConverter:
     async def convert(self, natural_language: str) -> str:
-        result = await get_nl2sql_engine().run(natural_language, use_llm=False)
+        result = await get_nl2sql_engine().run(natural_language)
         return result["sql"]

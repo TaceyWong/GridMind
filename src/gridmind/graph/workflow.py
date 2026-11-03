@@ -76,6 +76,8 @@ async def run_chat(
     session_id: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    preferred_metric: str | None = None,
+    preferred_dimensions: list[str] | None = None,
     user_id: str = "demo-user",
     tenant_id: str = "demo-tenant",
 ) -> dict[str, Any]:
@@ -87,6 +89,8 @@ async def run_chat(
             "session_id": session_id,
             "provider": provider,
             "model": model,
+            "preferred_metric": preferred_metric,
+            "preferred_dimensions": preferred_dimensions or [],
             "user_id": user_id,
             "tenant_id": tenant_id,
             "messages": [],
