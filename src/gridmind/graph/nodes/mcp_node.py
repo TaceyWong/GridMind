@@ -6,6 +6,7 @@ from typing import Any
 from gridmind.core.security import UserContext
 from gridmind.graph.state import ChatState
 from gridmind.mcp.client import McpClient
+from gridmind.nl2sql.gpt_vis import rows_to_gpt_vis
 
 
 def _extract_device_id(question: str) -> str | None:
@@ -76,12 +77,17 @@ async def execute_hybrid(state: ChatState) -> ChatState:
         server="bi",
         user=user,
     )
-    answer = (
-        "综合分析结果：\n"
-        f"1) 告警较多设备：{rows}\n"
-        f"2) 近一周温度汇总：{temp['result']}\n"
-        "结论：请重点关注温度偏高且告警密集的设备。"
-    )
+    chart_rows = [r for r in rows if isinstance(r, dict)]
+    vis = rows_to_gpt_vis(chart_rows, intent="rank", metric="alarm_count")
+    answer_parts = [
+        "综合分析结果：",
+        f"1) 告警较多设备：{rows}",
+        f"2) 近一周温度汇总：{temp['result']}",
+    ]
+    if vis:
+        answer_parts.extend(["", "告警分布：", vis])
+    answer_parts.append("结论：请重点关注温度偏高且告警密集的设备。")
+    answer = "\n".join(answer_parts)
     events = list(state.get("events", []))
     events.append({"type": "hybrid", "devices": device_ids[:5]})
     return {

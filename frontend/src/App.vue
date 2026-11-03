@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
+import MarkdownMessage from "./components/MarkdownMessage.vue";
 import { postQuery, routeLabel, streamChat, type ChatResponse, type QueryResponse } from "./api";
 
 type Role = "user" | "assistant";
@@ -26,8 +27,127 @@ type Session = {
 const prompts = [
   "告警等级是如何定义的？",
   "查询昨天各变电站的最高温度",
-  "设备 DEV-001 当前状态是什么？",
-  "查询告警最多的设备，并分析温度是否异常",
+  "统计各区域告警数量",
+  "查询告警数量排名前5的设备",
+];
+
+/** 走真实 /api/v1/chat/stream，后端 NL2SQL 会在回答里带 gpt-vis */
+const backendChartPrompts = [
+  "查询昨天各变电站的最高温度",
+  "统计各区域告警数量",
+  "查询告警数量排名前5的设备",
+];
+
+/** 本地 GPT-Vis 样例：不打后端，直接看 chat 里出图 */
+const chartDemos: Array<{ label: string; question: string; answer: string }> = [
+  {
+    label: "饼图 · 告警占比",
+    question: "各等级告警占比怎么样？",
+    answer: `根据近 24 小时告警汇总，**严重**与**一般**占比较高。
+
+\`\`\`gpt-vis
+vis pie
+data
+  - category 严重
+    value 28
+  - category 重要
+    value 41
+  - category 一般
+    value 63
+  - category 提示
+    value 19
+innerRadius: 0.62
+\`\`\`
+
+结论：一般告警最多，建议优先收敛误报规则。`,
+  },
+  {
+    label: "折线 · 温度趋势",
+    question: "主变 A 近 12 小时温度趋势？",
+    answer: `主变 A 绕组温度呈午后抬升、夜间回落。
+
+\`\`\`gpt-vis
+vis line
+data
+  - time 08:00
+    value 62
+  - time 10:00
+    value 68
+  - time 12:00
+    value 74
+  - time 14:00
+    value 81
+  - time 16:00
+    value 79
+  - time 18:00
+    value 73
+  - time 20:00
+    value 67
+axisXTitle: 时间
+axisYTitle: 温度 ℃
+\`\`\`
+
+14:00 附近触及 **81℃**，仍低于 90℃ 告警阈值。`,
+  },
+  {
+    label: "柱状 · 站点对比",
+    question: "对比各变电站昨日最高温度",
+    answer: `昨日各站最高温度对比如下。
+
+\`\`\`gpt-vis
+vis column
+data
+  - category 城东站
+    value 78
+  - category 城西站
+    value 84
+  - category 滨江站
+    value 71
+  - category 高新站
+    value 88
+  - category 空港站
+    value 76
+axisYTitle: 最高温度 ℃
+\`\`\`
+
+**高新站**最高（88℃），建议优先巡检散热与负荷。`,
+  },
+  {
+    label: "多图 · 组合样例",
+    question: "给一份告警与在线率简报",
+    answer: `## 运行简报
+
+昨日新增告警 **151** 条，设备在线率维持高位。
+
+### 告警结构
+
+\`\`\`gpt-vis
+vis bar
+data
+  - category 过温
+    value 52
+  - category 通信中断
+    value 34
+  - category 油位异常
+    value 21
+  - category 其他
+    value 44
+\`\`\`
+
+### 在线率
+
+\`\`\`gpt-vis
+vis pie
+data
+  - category 在线
+    value 96
+  - category 离线
+    value 4
+innerRadius: 0.7
+\`\`\`
+
+若需要下钻到具体设备，直接点名站名或设备编号即可。`,
+  },
 ];
 
 const sessions = ref<Session[]>([]);
@@ -39,6 +159,7 @@ const error = ref("");
 const feedRef = ref<HTMLElement | null>(null);
 
 const active = computed(() => sessions.value.find((s) => s.id === activeId.value) || null);
+const hasMessages = computed(() => (active.value?.messages.length || 0) > 0);
 
 function uid(prefix = "id") {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
@@ -95,7 +216,7 @@ async function send(text?: string) {
   session.messages.push({
     id: thinkingId,
     role: "assistant",
-    text: "正在理解问题并组织分析…",
+    text: "",
     thinking: true,
   });
   session.updatedAt = Date.now();
@@ -119,19 +240,18 @@ async function send(text?: string) {
       if (event === "status") {
         const stage = String(data.stage || "");
         if (stage === "routing") {
-          patchAssistant({ text: "正在路由分析路径…", thinking: true });
+          patchAssistant({ text: assembled, thinking: true, route });
         } else if (stage === "answer") {
           route = (data.route as string) || route;
           patchAssistant({
-            text: assembled || "正在生成回答…",
+            text: assembled,
             route,
             thinking: !assembled,
           });
         }
       } else if (event === "event") {
-        const kind = String(data.type || "step");
         patchAssistant({
-          text: assembled || `执行中：${kind}`,
+          text: assembled,
           thinking: !assembled,
           route: (data.route as string) || route,
         });
@@ -168,7 +288,18 @@ async function send(text?: string) {
         rows = q.rows;
         summary = q.summary;
         sql = q.sql;
-        patchAssistant({ rows, summary, sql, route, text: assembled, thinking: false });
+        let text = assembled;
+        if (q.gpt_vis && !text.includes("```gpt-vis")) {
+          text = `${text || "已完成问数查询。"}\n\n${q.gpt_vis}`;
+        }
+        patchAssistant({
+          rows,
+          summary,
+          sql,
+          route: route || "nl2sql",
+          text,
+          thinking: false,
+        });
       } catch {
         // keep streamed payload
       }
@@ -218,8 +349,31 @@ function rowKeys(rows?: Record<string, unknown>[]) {
   return Object.keys(rows[0]);
 }
 
-onMounted(() => {
-  createSession("欢迎使用 GridMind");
+async function showChartDemo(demo: (typeof chartDemos)[number]) {
+  if (busy.value) return;
+  const session = ensureSession();
+  error.value = "";
+  if (session.messages.length === 0) {
+    session.title = summarizeTitle(demo.question);
+  }
+  session.messages.push({
+    id: uid("m"),
+    role: "user",
+    text: demo.question,
+  });
+  session.messages.push({
+    id: uid("m"),
+    role: "assistant",
+    text: demo.answer,
+    route: "nl2sql",
+  });
+  session.updatedAt = Date.now();
+  await scrollBottom();
+}
+
+onMounted(async () => {
+  createSession("图表样例");
+  await showChartDemo(chartDemos[0]);
 });
 </script>
 
@@ -228,15 +382,15 @@ onMounted(() => {
     <aside class="rail">
       <div class="brand">
         <div class="mark" aria-hidden="true"></div>
-        <div>
+        <div class="brand-text">
           <div class="brand-name">GridMind</div>
-          <div class="brand-sub">电网智能问数</div>
+          <div class="brand-sub">Studio</div>
         </div>
       </div>
 
       <button class="new-btn" type="button" @click="createSession()">新建分析</button>
 
-      <div class="rail-label">历史对话</div>
+      <div class="rail-label">最近</div>
       <div class="session-list">
         <button
           v-for="s in sessions"
@@ -246,112 +400,144 @@ onMounted(() => {
           :class="{ active: s.id === activeId }"
           @click="activeId = s.id"
         >
-          <span>{{ s.title }}</span>
-          <small>{{ new Date(s.updatedAt).toLocaleTimeString() }}</small>
+          {{ s.title }}
         </button>
       </div>
 
       <div class="rail-foot">
-        <div class="pill">工作空间 · 演示数据集</div>
-        <div class="hint">默认自然语言；口径可见，结果可验证</div>
+        <div class="rail-label">后端出图</div>
+        <button
+          v-for="q in backendChartPrompts"
+          :key="q"
+          type="button"
+          class="demo-link"
+          :disabled="busy"
+          @click="send(q)"
+        >
+          {{ q }}
+        </button>
+        <div class="rail-label">本地样例</div>
+        <button
+          v-for="demo in chartDemos"
+          :key="demo.label"
+          type="button"
+          class="demo-link"
+          @click="showChartDemo(demo)"
+        >
+          {{ demo.label }}
+        </button>
       </div>
     </aside>
 
     <main class="stage">
       <header class="topbar">
-        <div>
-          <h1>把问题丢进来，系统自动完成检索、问数与设备查询</h1>
-          <p>用户无感底层技术；可看到理解口径、表格结果与引用来源。</p>
-        </div>
+        <div class="topbar-title">{{ active?.title || "新的分析" }}</div>
         <label class="diag-toggle">
           <input v-model="showDiag" type="checkbox" />
-          高级诊断
+          诊断
         </label>
       </header>
 
       <section ref="feedRef" class="feed" aria-live="polite">
-        <div v-if="!active?.messages.length" class="empty">
-          <div class="empty-title">从一条业务问题开始</div>
-          <div class="prompt-grid">
-            <button
-              v-for="p in prompts"
-              :key="p"
-              type="button"
-              class="prompt"
-              @click="send(p)"
-            >
-              {{ p }}
-            </button>
-          </div>
-        </div>
-
-        <article
-          v-for="m in active?.messages || []"
-          :key="m.id"
-          class="bubble"
-          :class="[m.role, { thinking: m.thinking }]"
-        >
-          <div class="bubble-meta">
-            <span>{{ m.role === "user" ? "你" : "GridMind" }}</span>
-            <span v-if="m.route" class="route">{{ routeLabel(m.route) }}</span>
-          </div>
-          <div class="bubble-text">{{ m.text }}</div>
-
-          <div v-if="formatSummary(m.summary).length" class="summary">
-            <div class="summary-title">分析口径</div>
-            <dl>
-              <div v-for="item in formatSummary(m.summary)" :key="item.label">
-                <dt>{{ item.label }}</dt>
-                <dd>{{ item.value }}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div v-if="m.rows?.length" class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th v-for="k in rowKeys(m.rows)" :key="k">{{ k }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, i) in m.rows" :key="i">
-                  <td v-for="k in rowKeys(m.rows)" :key="k">{{ row[k] }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div v-if="m.sources?.length" class="sources">
-            <div class="summary-title">引用来源</div>
-            <div v-for="(s, i) in m.sources" :key="i" class="source">
-              <strong>{{ s.source || s.doc_id }}</strong>
-              <span>{{ s.snippet }}</span>
+        <div class="feed-inner">
+          <div v-if="!hasMessages" class="empty">
+            <h2 class="empty-title">想查什么？</h2>
+            <p class="empty-lede">检索口径、问数分析或设备状态，直接说即可。</p>
+            <div class="prompt-grid">
+              <button
+                v-for="p in prompts"
+                :key="p"
+                type="button"
+                class="prompt"
+                @click="send(p)"
+              >
+                {{ p }}
+              </button>
             </div>
           </div>
 
-          <details v-if="showDiag && m.sql" class="diag">
-            <summary>查看生成 SQL</summary>
-            <pre>{{ m.sql }}</pre>
-          </details>
-        </article>
+          <article
+            v-for="m in active?.messages || []"
+            :key="m.id"
+            class="bubble"
+            :class="[m.role, { thinking: m.thinking }]"
+          >
+            <div class="bubble-meta">
+              <span class="who">{{ m.role === "user" ? "你" : "GridMind" }}</span>
+              <span
+                v-if="m.route"
+                class="route"
+                :class="`route-${m.route}`"
+              >{{ routeLabel(m.route) }}</span>
+              <span v-if="m.thinking" class="thinking-dots" aria-hidden="true">
+                <i /><i /><i />
+              </span>
+            </div>
+
+            <MarkdownMessage
+              v-if="m.role === 'assistant' && (m.text || m.thinking)"
+              :content="m.text || (m.thinking ? '_正在组织分析…_' : '')"
+              :streaming="busy && m.id === active?.messages[active.messages.length - 1]?.id && !m.thinking"
+            />
+            <div v-else class="bubble-text">{{ m.text }}</div>
+
+            <div v-if="formatSummary(m.summary).length" class="summary">
+              <div class="summary-title">分析口径</div>
+              <dl>
+                <div v-for="item in formatSummary(m.summary)" :key="item.label">
+                  <dt>{{ item.label }}</dt>
+                  <dd>{{ item.value }}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div v-if="m.rows?.length" class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th v-for="k in rowKeys(m.rows)" :key="k">{{ k }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, i) in m.rows" :key="i">
+                    <td v-for="k in rowKeys(m.rows)" :key="k">{{ row[k] }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-if="m.sources?.length" class="sources">
+              <div class="summary-title">引用来源</div>
+              <div v-for="(s, i) in m.sources" :key="i" class="source">
+                <strong>{{ s.source || s.doc_id }}</strong>
+                <span>{{ s.snippet }}</span>
+              </div>
+            </div>
+
+            <details v-if="showDiag && m.sql" class="diag">
+              <summary>查看生成 SQL</summary>
+              <pre>{{ m.sql }}</pre>
+            </details>
+          </article>
+        </div>
       </section>
 
       <footer class="composer">
-        <div v-if="error" class="error">{{ error }}</div>
-        <div class="composer-box">
-          <textarea
-            v-model="draft"
-            rows="2"
-            placeholder="例如：上个月各区域的设备告警数量？"
-            :disabled="busy"
-            @keydown="onKeydown"
-          />
-          <button class="send" type="button" :disabled="busy || !draft.trim()" @click="send()">
-            {{ busy ? "分析中" : "发送" }}
-          </button>
+        <div class="composer-inner">
+          <div v-if="error" class="error">{{ error }}</div>
+          <div class="composer-box">
+            <textarea
+              v-model="draft"
+              rows="2"
+              placeholder="输入问题，Enter 发送"
+              :disabled="busy"
+              @keydown="onKeydown"
+            />
+            <button class="send" type="button" :disabled="busy || !draft.trim()" @click="send()">
+              {{ busy ? "…" : "发送" }}
+            </button>
+          </div>
         </div>
-        <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
       </footer>
     </main>
   </div>
@@ -359,252 +545,324 @@ onMounted(() => {
 
 <style scoped>
 .shell {
-  min-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 232px minmax(0, 1fr);
 }
 
 .rail {
-  padding: 28px 20px;
+  padding: 20px 14px 16px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.28));
-  backdrop-filter: blur(10px);
+  background: var(--rail);
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  animation: rise 0.7s ease both;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .brand {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
+  padding: 2px 6px 6px;
 }
 
 .mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background:
-    linear-gradient(135deg, transparent 46%, var(--accent) 46% 54%, transparent 54%),
-    linear-gradient(45deg, transparent 46%, var(--accent-deep) 46% 54%, transparent 54%),
-    radial-gradient(circle at 50% 50%, var(--accent-soft), transparent 70%),
-    #fff;
-  box-shadow: inset 0 0 0 1px var(--line);
-  animation: pulse-mark 3.2s ease-in-out infinite;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--ink-bright);
 }
 
 .brand-name {
-  font-size: 1.35rem;
+  font-family: var(--display);
+  font-size: 1.05rem;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
+  color: var(--ink-bright);
+  line-height: 1.1;
 }
 
 .brand-sub {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-top: 2px;
 }
 
 .new-btn,
 .send,
 .prompt,
-.session-item {
-  border: 1px solid var(--line);
-  background: var(--panel-strong);
+.session-item,
+.demo-link {
+  border: 0;
+  background: transparent;
   color: var(--ink);
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .new-btn {
-  border-radius: 999px;
-  padding: 12px 16px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font-weight: 600;
-  background: var(--accent);
-  color: white;
-  border-color: transparent;
+  font-size: 0.9rem;
+  background: var(--bg-elevated);
+  color: var(--ink-bright);
+  text-align: left;
 }
 
 .new-btn:hover,
-.send:hover:not(:disabled),
 .prompt:hover {
-  transform: translateY(-1px);
+  background: #1b1b1b;
 }
 
 .rail-label {
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
+  padding: 4px 8px 0;
 }
 
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
   overflow: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .session-item {
   text-align: left;
-  border-radius: 14px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
 }
 
 .session-item.active {
   background: var(--accent-soft);
-  border-color: rgba(15, 118, 110, 0.35);
-}
-
-.session-item small {
-  color: var(--muted);
+  color: var(--ink-bright);
 }
 
 .rail-foot {
   margin-top: auto;
   display: grid;
-  gap: 8px;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
-.pill {
-  display: inline-flex;
-  width: fit-content;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-deep);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.hint {
+.demo-link {
+  text-align: left;
+  border-radius: 8px;
+  padding: 7px 10px;
   color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.5;
+  font-size: 0.78rem;
+}
+
+.demo-link:hover {
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .stage {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
-  animation: rise 0.85s ease 0.08s both;
+  min-height: 0;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
 }
 
 .topbar {
-  padding: 28px 36px 12px;
+  flex-shrink: 0;
+  z-index: 5;
+  height: 52px;
+  padding: 0 28px;
   display: flex;
   justify-content: space-between;
-  gap: 24px;
-  align-items: start;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
 }
 
-.topbar h1 {
-  margin: 0;
-  font-size: clamp(1.35rem, 2vw, 1.85rem);
-  letter-spacing: -0.03em;
-  max-width: 18ch;
-  line-height: 1.2;
-}
-
-.topbar p {
-  margin: 10px 0 0;
-  color: var(--ink-soft);
-  max-width: 46ch;
+.topbar-title {
+  font-size: 0.92rem;
+  font-weight: 560;
+  color: var(--ink-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diag-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   white-space: nowrap;
-  padding-top: 6px;
 }
 
 .feed {
-  padding: 8px 36px 24px;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  padding: 24px 20px 12px;
+}
+
+.feed-inner {
+  width: min(100%, var(--content));
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
 }
 
 .empty {
-  margin: auto 0;
-  padding: 28px 0 48px;
-  animation: rise 0.8s ease both;
+  padding: 48px 0 24px;
+  animation: rise 0.45s ease both;
 }
 
 .empty-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-bottom: 16px;
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--ink-bright);
+}
+
+.empty-lede {
+  margin: 10px 0 22px;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 .prompt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  max-width: 820px;
+  gap: 10px;
 }
 
 .prompt {
   text-align: left;
-  border-radius: var(--radius);
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 14px 14px;
   line-height: 1.45;
-  background: var(--panel);
-  box-shadow: var(--shadow);
+  background: var(--bg-elevated);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
 }
 
 .bubble {
-  max-width: 860px;
-  padding: 16px 18px;
-  border-radius: var(--radius);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  animation: rise 0.45s ease both;
+  width: 100%;
+  animation: rise 0.35s ease both;
 }
 
 .bubble.user {
   align-self: end;
-  background: linear-gradient(180deg, #16352f, #0f766e);
-  color: #f4fffc;
-  border-color: transparent;
+  width: fit-content;
+  max-width: 85%;
+  margin-left: auto;
+  padding: 12px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: #171717;
+  color: var(--ink-bright);
 }
 
-.bubble.thinking {
-  color: var(--muted);
+.bubble.assistant {
+  padding: 2px 0 4px;
 }
 
 .bubble-meta {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   font-size: 0.78rem;
-  opacity: 0.8;
+  color: var(--muted);
+}
+
+.who {
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 
 .route {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: #111;
+  background: #e8e6e0;
 }
 
-.bubble.assistant .route {
-  background: var(--accent-soft);
-  color: var(--accent-deep);
+.route-nl2sql {
+  color: #10231c;
+  background: #9fe6c3;
+}
+
+.route-rag {
+  color: #1a2030;
+  background: #b7c7f5;
+}
+
+.route-mcp {
+  color: #2a1d10;
+  background: #efc89a;
+}
+
+.route-hybrid {
+  color: #241828;
+  background: #ddb8e8;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.thinking-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-soft);
+  animation: pulse-dot 1.1s ease-in-out infinite;
+}
+
+.thinking-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dots i:nth-child(3) {
+  animation-delay: 0.3s;
 }
 
 .bubble-text {
   white-space: pre-wrap;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .summary,
@@ -613,68 +871,63 @@ onMounted(() => {
 .diag {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.18);
-}
-
-.bubble.assistant .summary,
-.bubble.assistant .sources,
-.bubble.assistant .table-wrap,
-.bubble.assistant .diag {
-  border-top-color: var(--line);
+  border-top: 1px solid var(--line);
 }
 
 .summary-title {
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 8px;
-  opacity: 0.8;
+  color: var(--muted);
 }
 
 .summary dl {
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .summary dl > div {
   display: grid;
-  grid-template-columns: 88px 1fr;
+  grid-template-columns: 72px 1fr;
   gap: 8px;
 }
 
 .summary dt {
-  color: inherit;
-  opacity: 0.7;
+  color: var(--muted);
 }
 
 .summary dd {
   margin: 0;
   font-family: var(--mono);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
+  color: var(--ink);
 }
 
 .table-wrap {
   overflow: auto;
+  border-radius: 10px;
+  background: #121212;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
 }
 
 th,
 td {
-  padding: 8px 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   white-space: nowrap;
 }
 
 th {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -682,9 +935,9 @@ th {
 
 .source {
   display: grid;
-  gap: 4px;
-  padding: 8px 0;
-  font-size: 0.9rem;
+  gap: 3px;
+  padding: 7px 0;
+  font-size: 0.88rem;
 }
 
 .source span {
@@ -699,28 +952,34 @@ th {
 .diag pre {
   margin: 10px 0 0;
   padding: 12px;
-  border-radius: 12px;
-  background: #10231f;
-  color: #d7fff4;
+  border-radius: 10px;
+  background: #101010;
+  color: var(--ink);
   overflow: auto;
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
 }
 
 .composer {
-  padding: 0 36px 28px;
+  flex-shrink: 0;
+  padding: 10px 20px 18px;
+  background: var(--bg);
+}
+
+.composer-inner {
+  width: min(100%, var(--content));
+  margin: 0 auto;
 }
 
 .composer-box {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 12px;
+  gap: 10px;
   align-items: end;
-  padding: 14px;
-  border-radius: 22px;
-  background: var(--panel-strong);
+  padding: 10px 10px 10px 14px;
+  border-radius: 16px;
+  background: #141414;
   border: 1px solid var(--line);
-  box-shadow: var(--shadow);
 }
 
 textarea {
@@ -729,87 +988,66 @@ textarea {
   resize: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-bright);
   line-height: 1.5;
-  min-height: 56px;
+  min-height: 48px;
+  max-height: 160px;
 }
 
-.send {
-  border: 0;
-  border-radius: 999px;
-  padding: 12px 18px;
-  background: var(--accent);
-  color: white;
-  font-weight: 600;
-}
-
-.send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.composer-hint,
-.error {
-  margin-top: 8px;
-  font-size: 0.8rem;
-}
-
-.composer-hint {
+textarea::placeholder {
   color: var(--muted);
 }
 
+.send {
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: var(--ink-bright);
+  color: #111;
+  font-weight: 650;
+  font-size: 0.88rem;
+}
+
+.send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .error {
+  margin-bottom: 8px;
+  font-size: 0.78rem;
   color: var(--danger);
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes pulse-mark {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.04);
-  }
 }
 
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .rail {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    max-height: 148px;
+  }
+
+  .rail-foot {
+    display: none;
   }
 
   .session-list {
-    max-height: 140px;
+    max-height: 56px;
+  }
+
+  .stage {
+    height: auto;
+    min-height: 0;
   }
 
   .topbar,
   .feed,
   .composer {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
-
-  .topbar {
-    flex-direction: column;
-  }
-
-  .topbar h1 {
-    max-width: none;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .prompt-grid {

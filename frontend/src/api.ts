@@ -20,6 +20,7 @@ export type QueryResponse = {
   sql: string;
   rows: Record<string, unknown>[];
   chart?: Record<string, unknown> | null;
+  gpt_vis?: string | null;
   ir?: Record<string, unknown> | null;
 };
 

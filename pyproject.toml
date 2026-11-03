@@ -27,6 +27,8 @@ dependencies = [
     "pgvector>=0.4",
     "llama-index-embeddings-huggingface>=0.5",
     "llama-index-llms-openai>=0.3",
+    "llama-index-vector-stores-postgres>=0.5",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]

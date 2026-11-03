@@ -10,7 +10,22 @@ def rule_route(question: str) -> str:
     q = question
     if any(k in q for k in ("说明书", "手册", "定义", "口径", "知识", "如何定义", "什么是")):
         return "rag"
-    if any(k in q for k in ("统计", "排名", "趋势", "对比", "多少", "最高温度", "告警数量", "在线设备")):
+    if any(
+        k in q
+        for k in (
+            "统计",
+            "排名",
+            "最多",
+            "趋势",
+            "对比",
+            "多少",
+            "最高温度",
+            "告警数量",
+            "在线设备",
+            "各区域",
+            "各变电站",
+        )
+    ):
         if any(k in q for k in ("分析", "异常", "温度变化", "综合")):
             return "hybrid"
         return "nl2sql"

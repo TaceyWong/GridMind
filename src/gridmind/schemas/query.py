@@ -14,4 +14,5 @@ class QueryResponse(BaseModel):
     sql: str
     rows: list[dict[str, Any]]
     chart: dict[str, Any] | None = None
+    gpt_vis: str | None = None
     ir: dict[str, Any] | None = None

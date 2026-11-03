@@ -7,6 +7,7 @@ from gridmind.llm.prompts.nl2sql import NL2SQL_SYSTEM
 from gridmind.llm.providers import ChatMessage
 from gridmind.nl2sql.compiler import compile_sql
 from gridmind.nl2sql.executor import execute_sql, init_demo_db, memory_timeseries_join
+from gridmind.nl2sql.gpt_vis import rows_to_gpt_vis
 from gridmind.nl2sql.planner import plan_from_question
 from gridmind.nl2sql.query_ir import QueryIR
 from gridmind.nl2sql.semantic import load_semantic_model, schema_prompt
@@ -44,6 +45,12 @@ class Nl2SqlEngine:
         safe_sql = validate_sql(sql, dialect="sqlite")
         rows = execute_sql(safe_sql)
         chart = _to_chart(ir, rows)
+        gpt_vis = rows_to_gpt_vis(
+            rows,
+            chart=chart,
+            intent=ir.intent,
+            metric=ir.metric,
+        )
         summary = {
             "time_range": ir.time_range,
             "metric": ir.metric,
@@ -60,6 +67,7 @@ class Nl2SqlEngine:
             "summary": summary,
             "rows": rows,
             "chart": chart,
+            "gpt_vis": gpt_vis,
         }
 
     async def alarm_top_devices(self, limit: int = 5) -> list[dict[str, Any]]:
@@ -91,8 +99,19 @@ def _to_chart(ir: QueryIR, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     keys = list(rows[0].keys())
     if len(keys) < 2:
         return {"type": "table", "columns": keys, "data": rows}
+
+    chart_type = "column"
+    if ir.intent == "compare" or (ir.dimensions and ir.dimensions[0] in {"month", "day"}):
+        chart_type = "line"
+    elif ir.intent == "status" and len(rows) <= 6:
+        chart_type = "pie"
+    elif ir.intent == "rank":
+        chart_type = "column"
+    elif ir.metric and "temp" in ir.metric:
+        chart_type = "column"
+
     return {
-        "type": "bar",
+        "type": chart_type,
         "x": keys[0],
         "y": keys[1],
         "data": rows,

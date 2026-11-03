@@ -11,7 +11,7 @@
     uv run python -m gridmind.demo litellm
     uv run python -m gridmind.demo langchain
     uv run python -m gridmind.demo langgraph
-    uv run python -m gridmind.demo llamaindex
+    uv run python -m gridmind.demo llamaindex    # LlamaIndex Agent + BGE + pgvector
     uv run python -m gridmind.demo rag
     uv run python -m gridmind.demo docling_rag   # Docling Server+BGE+LlamaIndex+LLM
     uv run python -m gridmind.demo nl2sql

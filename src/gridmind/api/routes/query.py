@@ -15,5 +15,6 @@ async def query(request: QueryRequest) -> QueryResponse:
         sql=result["sql"],
         rows=result["rows"],
         chart=result.get("chart"),
+        gpt_vis=result.get("gpt_vis") or None,
         ir=result.get("ir"),
     )
